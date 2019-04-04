@@ -1,57 +1,87 @@
 import gym
-import multiagent
 import numpy
+from Representations import *
+import time
+from baselines.a2c import a2c
+from baselines.a2c.policies import *
 from baselines import deepq
-from multiagent.policy import InteractivePolicy
+from time import sleep
+import IndependentQ
 from gui import gameGUI
+from models import cnn_rnn_mlp
 from baselines.deepq import models
-def sample(l):
-    return [i.sample() for i in l]
+from baselines.ppo1.pposgd_simple import learn
+from baselines.trpo_mpi.nosharing_cnn_policy import CnnPolicy
+from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
+import pickle
+import matplotlib.pyplot as plt
+import baselines.common.tf_util as U
 
-def make_env(scenario_name, benchmark=False):
-    '''
-    Creates a MultiAgentEnv object as env. This can be used similar to a gym
-    environment by calling env.reset() and env.step().
-    Use env.render() to view the environment on the screen.
-    Input:
-        scenario_name   :   name of the scenario from ./scenarios/ to be Returns
-                            (without the .py extension)
-        benchmark       :   whether you want to produce benchmarking data
-                            (usually only done during evaluation)
-    Some useful env properties (see environment.py):
-        .observation_space  :   Returns the observation space for each agent
-        .action_space       :   Returns the action space for each agent
-        .n                  :   Returns the number of Agents
-    '''
-    from multiagent.environment import MultiAgentEnv
-    import multiagent.scenarios as scenarios
+def save(act,env):
+    act.save(fname)
+    try:
+        pickle.dump(env.repr.trail,open('trail'+fname,'wb'))
+    except:
+        return
+def load(env):
+    act = deepq.load(path=fname)
+    try:
+        env.repr.trail=pickle.load(open('trail'+fname,'rb'))
+    except:
+        pass
+    return act
 
-    # load scenario from script
-    scenario = scenarios.load(scenario_name + ".py").Scenario()
-    # create world
-    world = scenario.make_world()
-    # create multiagent environment
-    if benchmark:
-        env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation, scenario.benchmark_data)
-    else:
-        env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation)
-    return env
+totalsize=8
+vision=1
+goalSize=1
+agentSize=1
+#repr=DoubleTrace(vision,totalsize)
+#repr=PartialVisionNormal(vision)
+repr=PartialAnt(vision,totalsize)
+#repr=LearnAnt(vision,totalsize)
+fname="deepq-%d-%s-%d-alldir.pkl"%(agentSize,repr.__class__.__name__,totalsize)
+env = gameGUI(totalsize, 45, goalSize, agentSize, repr, vision=vision)
+qf = models.cnn_to_mlp(convs=[(32, 3, 1), (64, 3, 1), (64, 3, 1)], hiddens=[256])
 
-#env=gym.make('CartPole-v0')
-env=gameGUI(64,15,1)
-#env=make_env('simple')
-#obs_n=env.reset()
-qf=models.cnn_to_mlp([(64,3,1),(32,3,1)],[512])
-act=deepq.learn(env=env,q_func=qf,lr=0.001,max_timesteps=1000,buffer_size=10000,exploration_fraction=0.1)
-act.save("fullFixed.pkl")
+
+act,rewards=IndependentQ.learn(env=env,q_func=qf,lr=0.0001,max_timesteps=int(2e5),buffer_size=100000,exploration_fraction=0.2, gamma=0.9, exploration_final_eps=0.2,prioritized_replay=False,print_freq=20)
+
+
+#act,rewards=IndependentQ.learn(env=env,q_func=qf,lr=0.0001,max_timesteps=int(2e4),buffer_size=100000,exploration_fraction=0.2, gamma=0.9, exploration_final_eps=0.2,prioritized_replay=False,print_freq=20)
+pickle.dump(rewards,open('dirtrewards-const.txt','wb'))
+
+save(act,env)
+#act = load(env)
+# print(env.repr.trail)
 
 for _ in range(10):
     obs, done = env.reset(), False
     episode_rew = 0
-    obs, done = env.reset(), False
-    episode_rew = 0
+    frame=0
     while not done:
         env.render()
-        obs, rew, done, _ = env.step(act(obs[None])[0])
+        action = []
+        qval = []
+        for i in range(agentSize):
+            prediction = act(np.array(obs[i])[None])
+            action.append(prediction[0][0])
+            qval.append(prediction[1][0])
+            print(qval)
+        obs, rew, done, _ = env.step(action, qval)
+        episode_rew+=rew
+        frame+=1
+        time.sleep(0.5)
+    #print(env._get_obs())
+    time.sleep(10)
+    print("Episode reward", episode_rew, "Num Frames:",frame)
 
-    print("Episode reward", episode_rew)
+'''
+env=gameGUI(totalsize,30,1,FullVisionNormal(totalsize),vision=vision)
+qf=models.cnn_to_mlp(convs=[(32, 3, 1), (64, 3, 1), (64, 3, 1)],hiddens=[256])
+act=IndependentQ.learn(env=env,q_func=qf,lr=0.0001,max_timesteps=int(2e4),buffer_size=10000,exploration_fraction=0.2, gamma=0.9, exploration_final_eps=0.2,prioritized_replay=True,print_freq=20)
+
+'''
+
+def trpo():
+    pass
+
